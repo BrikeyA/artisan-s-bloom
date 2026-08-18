@@ -7,6 +7,7 @@ import {
   Languages,
   Loader2,
   Mic,
+  MicOff,
   RefreshCcw,
   Sparkles,
   Upload,
@@ -35,14 +36,14 @@ export const Route = createFileRoute("/upload")({
 });
 
 const AI_STEPS = [
-  "Looking at your photo",
+  "Looking at your photo & voice description",
   "Recognising the craft and material",
   "Writing the story in your voice",
   "Comparing fair prices",
   "Translating for buyers abroad",
 ];
 
-type Phase = "capture" | "thinking" | "result";
+type Phase = "capture" | "prompt_speech" | "listening" | "thinking" | "result";
 
 function StepBadge({ n, title, hint }: { n: number; title: string; hint: string }) {
   return (
@@ -67,12 +68,48 @@ function UploadPage() {
   const [stepIndex, setStepIndex] = useState(0);
   const [preview, setPreview] = useState<string | null>(null);
   const [price, setPrice] = useState(2650);
+  const [transcript, setTranscript] = useState<string>("");
+  const [isListening, setIsListening] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   const captureSpeak = useSpeakable(
     "Take a photo of your craft. One picture is enough, blurry is fine.",
   );
 
+  // Initialize Speech Recognition on mount
+  useEffect(() => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = "en-IN"; // Supports Hindi ('hi-IN') or regional dialects if needed
+
+      recognition.onresult = (event: any) => {
+        let currentTranscript = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          currentTranscript += event.results[i][0].transcript;
+        }
+        setTranscript(currentTranscript);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error("Speech recognition error:", event.error);
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  // Handle AI step progression
   useEffect(() => {
     if (phase !== "thinking") return;
     setStepIndex(0);
@@ -81,7 +118,7 @@ function UploadPage() {
         if (i >= AI_STEPS.length - 1) {
           window.clearInterval(timer);
           setPhase("result");
-          say("Your listing is ready. Please check it and say yes.");
+          say("Your listing is ready based on your photo and spoken words.");
           return i;
         }
         return i + 1;
@@ -90,11 +127,50 @@ function UploadPage() {
     return () => window.clearInterval(timer);
   }, [phase, say]);
 
-  function startWithFile(file?: File) {
+  // Step 1: Triggered when image is captured
+  function handleImageCapture(file?: File) {
     if (file) setPreview(URL.createObjectURL(file));
     else setPreview(pottery);
+
+    setPhase("prompt_speech");
+    const promptText = "Photo uploaded! Now, press the mic and tell us about your craft in any language.";
+    say(promptText);
+    toast.info("Please tell us about your craft using your voice.");
+  }
+
+  // Step 2: Start capturing speech
+  function startListening() {
+    if (!recognitionRef.current) {
+      toast.error("Speech recognition is not supported in this browser.");
+      processWithSpeech("Handmade artisan pottery vase"); // Fallback
+      return;
+    }
+
+    setTranscript("");
+    setIsListening(true);
+    setPhase("listening");
+    say("Listening now. Speak clearly.");
+
+    try {
+      recognitionRef.current.start();
+    } catch (err) {
+      console.warn("Recognition start failed:", err);
+    }
+  }
+
+  // Step 3: Stop speech and trigger AI generation
+  function stopListeningAndGenerate() {
+    if (recognitionRef.current && isListening) {
+      recognitionRef.current.stop();
+    }
+    setIsListening(false);
+    processWithSpeech(transcript || "Handmade pottery item");
+  }
+
+  // Step 4: Advance to AI processing
+  function processWithSpeech(userSpeech: string) {
     setPhase("thinking");
-    say("Photo received. The studio is writing your listing now.");
+    say(`Thank you. Generating your listing based on: ${userSpeech}`);
   }
 
   return (
@@ -102,8 +178,7 @@ function UploadPage() {
       <p className="font-accent text-xl text-vermillion">Naya Kaam</p>
       <h1 className="font-display text-4xl font-black sm:text-5xl">Add a craft in one photo</h1>
       <p className="mt-2 max-w-2xl text-muted-foreground">
-        You never have to type. Take a picture, listen to what the studio wrote, then say yes or ask
-        for a change.
+        You never have to type. Take a picture, speak a few words, and let the studio create your listing.
       </p>
 
       <div className="mt-10 grid gap-8">
@@ -137,7 +212,7 @@ function UploadPage() {
                 capture="environment"
                 className="sr-only"
                 aria-label="Choose or take a photo of your craft"
-                onChange={(e) => startWithFile(e.target.files?.[0])}
+                onChange={(e) => handleImageCapture(e.target.files?.[0])}
               />
               <button
                 type="button"
@@ -157,18 +232,7 @@ function UploadPage() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  toast("Listening… say the name of your craft in any language.");
-                  say("Listening. Say the name of your craft in any language.");
-                }}
-                className="inline-flex min-h-16 items-center justify-center gap-3 rounded-2xl border-3 border-input px-6 font-display text-xl font-bold hover:bg-secondary"
-              >
-                <Mic className="size-6 shrink-0" aria-hidden="true" />
-                Speak instead
-              </button>
-              <button
-                type="button"
-                onClick={() => startWithFile()}
+                onClick={() => handleImageCapture()}
                 className="min-h-12 text-left font-semibold text-primary underline underline-offset-4"
               >
                 No camera right now? Try it with a sample craft
@@ -177,8 +241,72 @@ function UploadPage() {
           </div>
         </div>
 
-        {/* Step 2 — AI working */}
-        {phase !== "capture" && (
+        {/* Step 2 — Voice Prompt after photo selection */}
+        {(phase === "prompt_speech" || phase === "listening") && (
+          <div className="rounded-3xl bg-card p-6 zari-border sm:p-8 animate-in fade-in duration-300">
+            <StepBadge
+              n={2}
+              title="Tell us about this item"
+              hint="Press speak and say what it is, how it was made, or what material was used."
+            />
+
+            <div className="mt-6 grid gap-6">
+              <div className="rounded-2xl bg-secondary p-6 text-center">
+                {isListening ? (
+                  <div className="flex flex-col items-center gap-3">
+                    <span className="relative flex size-12">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-vermillion opacity-75"></span>
+                      <span className="relative inline-flex size-12 items-center justify-center rounded-full bg-vermillion text-white">
+                        <Mic className="size-6" />
+                      </span>
+                    </span>
+                    <p className="font-display text-xl font-bold text-vermillion">Listening to you...</p>
+                    <p className="min-h-12 rounded-xl bg-background p-4 text-lg italic text-foreground w-full">
+                      "{transcript || "Start speaking now..."}"
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-lg text-muted-foreground">
+                    Click below and say something like: <i>"Blue pottery vase made with natural clay and hand-painted."</i>
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-wrap gap-4">
+                {!isListening ? (
+                  <button
+                    type="button"
+                    onClick={startListening}
+                    className="inline-flex min-h-16 items-center gap-3 rounded-2xl bg-vermillion px-8 font-display text-xl font-bold text-vermillion-foreground block-shadow"
+                  >
+                    <Mic className="size-7 shrink-0" aria-hidden="true" />
+                    Press to Speak
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={stopListeningAndGenerate}
+                    className="inline-flex min-h-16 items-center gap-3 rounded-2xl bg-primary px-8 font-display text-xl font-bold text-primary-foreground hover:bg-indigo-deep"
+                  >
+                    <Check className="size-7 shrink-0" aria-hidden="true" />
+                    Done Speaking — Generate Listing
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => processWithSpeech("Handmade artisan item")}
+                  className="inline-flex min-h-16 items-center gap-3 rounded-2xl border-3 border-input px-6 font-display text-lg font-bold hover:bg-secondary"
+                >
+                  Skip Voice — Use Image Only
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3 — AI working */}
+        {phase === "thinking" && (
           <div className="rounded-3xl jewel-surface p-6 sm:p-8">
             <div className="flex min-w-0 items-start gap-4">
               <span
@@ -189,14 +317,14 @@ function UploadPage() {
               </span>
               <div className="min-w-0">
                 <h2 className="font-display text-2xl font-bold">The studio is working</h2>
-                <p className="opacity-85">No hurry. Nothing is published without your yes.</p>
+                <p className="opacity-85">Processing image & speech description...</p>
               </div>
             </div>
 
             <ol className="mt-6 grid gap-3" aria-live="polite">
               {AI_STEPS.map((step, i) => {
-                const done = phase === "result" || i < stepIndex;
-                const active = phase === "thinking" && i === stepIndex;
+                const done = i < stepIndex;
+                const active = i === stepIndex;
                 return (
                   <li key={step} className="flex items-center gap-3 text-lg">
                     <span
@@ -221,11 +349,11 @@ function UploadPage() {
           </div>
         )}
 
-        {/* Step 3 — result */}
+        {/* Step 4 — Result */}
         {phase === "result" && (
           <div className="rounded-3xl bg-card p-6 zari-border sm:p-8">
             <StepBadge
-              n={2}
+              n={3}
               title="Here is what we wrote"
               hint="Read it, or press listen. Change anything you like."
             />
@@ -236,7 +364,14 @@ function UploadPage() {
                   Craft name
                 </p>
                 <p className="mt-1 font-display text-3xl font-black">Jaipur Blue Pottery Vase</p>
-                <p className="mt-4 text-lg">
+                
+                {transcript && (
+                  <p className="mt-2 text-sm font-semibold text-vermillion">
+                    Voice Note Incorporated: "{transcript}"
+                  </p>
+                )}
+
+                <p className="mt-3 text-lg">
                   A hand-thrown vase glazed in the cobalt and turquoise palette that Jaipur potters
                   have used for four centuries. Quartz-based clay, fired low and slow, painted
                   freehand with flowering vines — no two pieces repeat. Wipe with a dry cloth.
@@ -265,13 +400,9 @@ function UploadPage() {
                     ₹{price.toLocaleString()}
                   </p>
                   <p className="mt-2 text-muted-foreground">
-                    Similar hand-painted vases sold between ₹2,300 and ₹2,900 this month. Your glaze
-                    work is finer, so we aimed a little higher.
+                    Similar hand-painted vases sold between ₹2,300 and ₹2,900 this month.
                   </p>
-                  <label
-                    htmlFor="price"
-                    className="mt-4 block font-semibold"
-                  >
+                  <label htmlFor="price" className="mt-4 block font-semibold">
                     Change the price yourself
                   </label>
                   <input
@@ -297,9 +428,6 @@ function UploadPage() {
                     <li>Français · Vase en céramique bleue</li>
                     <li>日本語 · ブルーポタリーの花瓶</li>
                   </ul>
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    The craft's own name stays untranslated, so buyers learn it.
-                  </p>
                 </div>
               </div>
 
@@ -318,13 +446,12 @@ function UploadPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    setPhase("thinking");
-                    toast("Writing it again, in a warmer tone.");
+                    setPhase("prompt_speech");
                   }}
                   className="inline-flex min-h-16 items-center gap-3 rounded-full border-3 border-input px-8 font-display text-xl font-bold hover:bg-secondary"
                 >
                   <RefreshCcw className="size-6 shrink-0" aria-hidden="true" />
-                  Write it differently
+                  Speak again / Record new voice note
                 </button>
               </div>
             </div>

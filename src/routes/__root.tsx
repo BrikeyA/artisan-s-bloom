@@ -6,7 +6,6 @@ import {
   useRouter,
   HeadContent,
   Scripts,
-  redirect,
   useLocation,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
@@ -16,7 +15,6 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { A11yProvider } from "../components/a11y";
 import { AppShell } from "../components/AppShell";
 import { Toaster } from "../components/ui/sonner";
-import { supabase } from "../lib/supabase";
 
 function NotFoundComponent() {
   return (
@@ -79,25 +77,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
 }
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
-  // 1. Lock all routes behind authentication
-  beforeLoad: async ({ location }) => {
-    // Allow unauthenticated visitors to view the /auth page
-    if (location.pathname === "/auth") {
-      return;
-    }
-
-    // Check active session from Supabase
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    // Redirect unauthenticated visitors to /auth
-    if (!session) {
-      throw redirect({
-        to: "/auth",
-      });
-    }
-  },
+  // Authentication check removed so all pages are accessible via URL directly
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -158,7 +138,7 @@ function RootComponent() {
   return (
     <QueryClientProvider client={queryClient}>
       <A11yProvider>
-        {/* 2. Hide AppShell (header/navigation) on /auth route */}
+        {/* Hide AppShell (header/navigation) on /auth route */}
         {isAuthPage ? (
           <Outlet />
         ) : (
