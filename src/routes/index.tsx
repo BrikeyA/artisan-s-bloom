@@ -1,10 +1,21 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { Camera, Ear, Hand, Languages, Sparkles, TrendingUp } from "lucide-react";
 import heroPattern from "@/assets/hero-pattern.jpg";
 import { CRAFTS, ORDERS } from "@/data/crafts";
 import { useSpeakable } from "@/components/a11y";
+import { supabase } from "@/lib/supabase";
+import { useEffect, useState } from "react";
 
 export const Route = createFileRoute("/")({
+  // Lock the entire route before rendering
+  beforeLoad: async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      throw redirect({
+        to: "/auth",
+      });
+    }
+  },
   head: () => ({
     meta: [
       { title: "Kalakriti Studio — Sell Your Craft, AI Does the Typing" },
@@ -72,8 +83,37 @@ const HELPERS = [
 ];
 
 function Home() {
+  const [displayName, setDisplayName] = useState<string>("");
   const liveCount = CRAFTS.filter((c) => c.status === "live").length;
   const packing = ORDERS.filter((o) => o.stage === "packing").length;
+
+  useEffect(() => {
+    async function fetchVendorProfile() {
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (user) {
+        // Query the profiles table for full_name using user.id
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .single();
+
+        if (profile?.full_name) {
+          setDisplayName(profile.full_name);
+        } else if (user.email) {
+          setDisplayName(user.email);
+        }
+      }
+    }
+
+    fetchVendorProfile();
+  }, []);
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    window.location.href = "/auth";
+  };
 
   return (
     <>
@@ -88,9 +128,17 @@ function Home() {
         />
         <div className="relative mx-auto grid max-w-7xl gap-10 px-4 py-16 lg:grid-cols-[1.15fr_0.85fr] lg:py-24">
           <div className="min-w-0">
-            <p className="inline-flex items-center gap-2 rounded-full bg-marigold px-4 py-2 text-xs font-bold tracking-[0.22em] text-marigold-foreground uppercase">
-              Namaste, Meera ji
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="inline-flex items-center gap-2 rounded-full bg-marigold px-4 py-2 text-xs font-bold tracking-[0.22em] text-marigold-foreground uppercase">
+                Welcome, {displayName || "Artisan"}
+              </p>
+              <button
+                onClick={handleSignOut}
+                className="rounded-full bg-red-600/80 hover:bg-red-600 px-3 py-1 text-xs font-bold text-white transition-colors"
+              >
+                Sign Out
+              </button>
+            </div>
             <h1 className="mt-6 font-display text-5xl leading-[1.02] font-black text-primary-foreground sm:text-6xl lg:text-7xl">
               You make the craft.
               <span className="mt-2 block font-accent text-4xl text-marigold sm:text-5xl lg:text-6xl">
