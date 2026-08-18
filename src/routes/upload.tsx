@@ -31,7 +31,7 @@ export const Route = createFileRoute("/upload")({
       },
     ],
   }),
-  component: UploadPage;
+  component: UploadPage,
 });
 
 const AI_STEPS = [
